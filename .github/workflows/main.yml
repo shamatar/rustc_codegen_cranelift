@@ -15,12 +15,20 @@ jobs:
         include:
           - os: ubuntu-latest
           - os: macos-latest
+          - os: windows-latest
           # cross-compile from Linux to Windows using mingw
           - os: ubuntu-latest
             env:
               TARGET_TRIPLE: x86_64-pc-windows-gnu
 
     steps:
+    - name: Setup git config
+      shell: bash
+      run: |
+        git config --global core.autocrlf false
+        git config --global user.email "user@example.com"
+        git config --global user.name "User"
+
     - uses: actions/checkout@v2
 
     - name: Cache cargo installed crates
@@ -50,14 +58,14 @@ jobs:
         rustup target add x86_64-pc-windows-gnu
 
     - name: Prepare dependencies
+      shell: bash
       run: |
-        git config --global user.email "user@example.com"
-        git config --global user.name "User"
         ./prepare.sh
 
     - name: Test
       env:
         TARGET_TRIPLE: ${{ matrix.env.TARGET_TRIPLE }}
+      shell: bash
       run: |
         # Enable backtraces for easier debugging
         export RUST_BACKTRACE=1
