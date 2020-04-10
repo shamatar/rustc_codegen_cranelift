@@ -6,7 +6,7 @@ use rustc_middle::mir::mono::{Linkage as RLinkage, MonoItem, Visibility};
 use crate::prelude::*;
 
 mod aot;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 mod jit;
 
 pub(crate) fn codegen_crate(
@@ -19,11 +19,11 @@ pub(crate) fn codegen_crate(
     if std::env::var("CG_CLIF_JIT").is_ok()
         && tcx.sess.crate_types.get().contains(&rustc_session::config::CrateType::Executable)
     {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(any(windows, target_arch = "wasm32")))]
         let _: ! = jit::run_jit(tcx);
 
-        #[cfg(target_arch = "wasm32")]
-        panic!("jit not supported on wasm");
+        #[cfg(any(windows, target_arch = "wasm32"))]
+        panic!("jit not supported on windows and wasm");
     }
 
     aot::run_aot(tcx, metadata, need_metadata_module)

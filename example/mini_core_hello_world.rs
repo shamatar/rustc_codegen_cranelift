@@ -242,13 +242,13 @@ fn main() {
     assert_eq!(((|()| 42u8) as fn(()) -> u8)(()), 42);
 
     extern {
-        #[linkage = "weak"]
+        #[linkage = "extern_weak"]
         static ABC: *const u8;
     }
 
     {
         extern {
-            #[linkage = "weak"]
+            #[linkage = "extern_weak"]
             static ABC: *const u8;
         }
     }
