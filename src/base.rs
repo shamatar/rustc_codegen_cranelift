@@ -1,11 +1,13 @@
 //! Codegen of a single function
 
+use std::cell::RefCell;
+
 use rustc_index::vec::IndexVec;
 use rustc_middle::ty::adjustment::PointerCast;
 use rustc_middle::ty::layout::FnAbiExt;
 use rustc_target::abi::call::FnAbi;
 
-use crate::prelude::*;
+use crate::{TracerMode, prelude::*, sir};
 
 pub(crate) fn codegen_fn<'tcx>(
     cx: &mut crate::CodegenCx<'tcx, impl Module>,
@@ -50,6 +52,7 @@ pub(crate) fn codegen_fn<'tcx>(
         cx,
         tcx,
         pointer_type,
+        sir_func_cx: None,
 
         instance,
         mir,
@@ -67,6 +70,10 @@ pub(crate) fn codegen_fn<'tcx>(
 
         inline_asm_index: 0,
     };
+
+    if sir::is_sir_required(fx.tcx, fx.cx.backend_config) {
+        fx.sir_func_cx = Some(RefCell::new(SirFuncCx::new(&mut fx)));
+    }
 
     let arg_uninhabited = fx.mir.args_iter().any(|arg| {
         fx.layout_of(fx.monomorphize(&fx.mir.local_decls[arg].ty))
@@ -86,6 +93,17 @@ pub(crate) fn codegen_fn<'tcx>(
             });
             codegen_fn_content(&mut fx);
         });
+    }
+
+    if let Some(mut sfcx) = fx.sir_func_cx.take().map(|sfcx| sfcx.into_inner()) {
+        // Often there are function declarations with no blocks. I think these are call targets
+        // from other crates or compilation units, which have to be declared to keep LLVM happy.
+        // There's no use in serialising these "empty functions" and they clash with the real
+        // declarations.
+        if !sfcx.is_empty() {
+            sfcx.compute_layout_and_offsets(&fx);
+            fx.cx.define_function_sir(sfcx.sir_builder.func);
+        }
     }
 
     // Recover all necessary data from fx, before accessing func will prevent future access to it.
@@ -206,8 +224,76 @@ pub(crate) fn verify_func(
     });
 }
 
+macro_rules! set_unimplemented_sir_term {
+    ($func_cx:ident, $bb:expr, $term:expr) => {
+        if let Some(mut sfcx) = $func_cx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+            let note = rustc_middle::ty::print::with_no_trimmed_paths(|| {
+                format!("{}:{}: unimplemented terminator: {:?}", file!(), line!(), $term.kind)
+            });
+            sfcx.set_terminator($bb.as_u32(), ykpack::Terminator::Unimplemented(note))
+        }
+    };
+}
+
 fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
     crate::constant::check_constants(fx);
+
+    let do_not_trace = rustc_span::Symbol::intern("do_not_trace");
+    let mut is_do_not_trace = false;
+    for attr in fx.tcx.get_attrs(fx.instance.def_id()).iter() {
+        if fx.tcx.sess.check_name(attr, do_not_trace) {
+            is_do_not_trace = true;
+        }
+    }
+
+    let trace_fn_and_self_name = if is_do_not_trace
+        || !matches!(fx.cx.backend_config.tracer_mode, TracerMode::Sw)
+        || fx.tcx.crate_name(LOCAL_CRATE).as_str() == "build_script_build"
+    {
+        None
+    } else {
+        let func_id = fx.cx.module.declare_function(
+            "__yk_swt_rec_loc",
+            Linkage::Import,
+            &Signature {
+                params: vec![AbiParam::new(pointer_ty(fx.tcx)), AbiParam::new(types::I32)],
+                returns: vec![],
+                call_conv: fx.cx.module.target_config().default_call_conv,
+            },
+        ).unwrap();
+        let trace_fn = fx.cx.module.declare_func_in_func(func_id, &mut fx.bcx.func);
+
+
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let self_name = format!("{}\0", fx.tcx.symbol_name(fx.instance).name);
+        let mut hasher = DefaultHasher::new();
+        self_name.hash(&mut hasher);
+        let msg_hash = hasher.finish();
+        let mut data_ctx = DataContext::new();
+        data_ctx.define(self_name.as_bytes().to_vec().into_boxed_slice());
+        let msg_id = fx
+            .cx
+            .module
+            .declare_data(
+                &format!("__sw_trace_self_name_{:08x}", msg_hash),
+                Linkage::Local,
+                false,
+                false,
+            )
+            .unwrap();
+
+        fx.cx.module.define_data(msg_id, &data_ctx).unwrap();
+
+        let local_msg_id = fx.cx.module.declare_data_in_func(msg_id, fx.bcx.func);
+        #[cfg(debug_assertions)]
+        {
+            fx.add_comment(local_msg_id, self_name);
+        }
+
+        Some((trace_fn, local_msg_id))
+    };
 
     for (bb, bb_data) in fx.mir.basic_blocks().iter_enumerated() {
         let block = fx.get_block(bb);
@@ -222,8 +308,18 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
             // fx.cold_blocks.insert(block);
         }
 
+        if let Some((trace_fn, self_name)) = trace_fn_and_self_name {
+            let self_name = fx.bcx.ins().global_value(fx.pointer_type, self_name);
+            let bb_idx = fx.bcx.ins().iconst(types::I32, bb.as_u32() as i64);
+            fx.bcx.ins().call(trace_fn, &[self_name, bb_idx]);
+        }
+
         fx.bcx.ins().nop();
         for stmt in &bb_data.statements {
+            if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+                sfcx.lower_statement(fx, bb.as_u32(), stmt);
+            }
+
             fx.set_debug_loc(stmt.source_info);
             codegen_stmt(fx, block, stmt);
         }
@@ -242,8 +338,17 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
 
         fx.set_debug_loc(bb_data.terminator().source_info);
 
+        //let mut bx = self.build_block(bb);
+        //let sym = bx.cx().tcx().symbol_name(self.instance);
+        //let fname = bx.tcx().def_path_debug_str(self.instance.def_id());
+        //bx.add_yk_block_label(&fname, &sym, bb.index());
+
         match &bb_data.terminator().kind {
             TerminatorKind::Goto { target } => {
+                if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+                    sfcx.set_term_goto(bb, *target);
+                }
+
                 if let TerminatorKind::Return = fx.mir[*target].terminator().kind {
                     let mut can_immediately_return = true;
                     for stmt in &fx.mir[*target].statements {
@@ -256,6 +361,9 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                     }
 
                     if can_immediately_return {
+                        if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+                            sfcx.set_terminator(target.as_u32(), ykpack::Terminator::Return);
+                        }
                         crate::abi::codegen_return(fx);
                         continue;
                     }
@@ -265,6 +373,9 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                 fx.bcx.ins().jump(block, &[]);
             }
             TerminatorKind::Return => {
+                if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+                    sfcx.set_terminator(bb.as_u32(), ykpack::Terminator::Return);
+                }
                 crate::abi::codegen_return(fx);
             }
             TerminatorKind::Assert {
@@ -274,6 +385,9 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                 target,
                 cleanup: _,
             } => {
+                if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+                    sfcx.set_term_assert(fx, bb, cond, *expected, *target);
+                }
                 if !fx.tcx.sess.overflow_checks() {
                     if let mir::AssertKind::OverflowNeg(_) = *msg {
                         let target = fx.get_block(*target);
@@ -324,6 +438,10 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                 switch_ty,
                 targets,
             } => {
+                if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+                    sfcx.set_term_switchint(fx, bb.as_u32(), discr, targets);
+                }
+
                 let discr = codegen_operand(fx, discr).load_scalar(fx);
 
                 let use_bool_opt = switch_ty.kind() == fx.tcx.types.bool.kind()
@@ -389,6 +507,7 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                         func,
                         args,
                         *destination,
+                        bb,
                     )
                 });
             }
@@ -399,6 +518,7 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                 destination,
                 line_spans: _,
             } => {
+                set_unimplemented_sir_term!(fx, bb, bb_data.terminator());
                 crate::inline_asm::codegen_inline_asm(
                     fx,
                     bb_data.terminator().source_info.span,
@@ -421,9 +541,11 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                 }
             }
             TerminatorKind::Resume | TerminatorKind::Abort => {
+                set_unimplemented_sir_term!(fx, bb, bb_data.terminator());
                 trap_unreachable(fx, "[corruption] Unwinding bb reached.");
             }
             TerminatorKind::Unreachable => {
+                set_unimplemented_sir_term!(fx, bb, bb_data.terminator());
                 trap_unreachable(fx, "[corruption] Hit unreachable code.");
             }
             TerminatorKind::Yield { .. }
@@ -438,6 +560,7 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                 target,
                 unwind: _,
             } => {
+                set_unimplemented_sir_term!(fx, bb, bb_data.terminator());
                 let drop_place = codegen_place(fx, *place);
                 crate::abi::codegen_drop(fx, bb_data.terminator().source_info.span, drop_place);
 

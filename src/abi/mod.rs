@@ -350,13 +350,12 @@ pub(crate) fn codegen_terminator_call<'tcx>(
     func: &Operand<'tcx>,
     args: &[Operand<'tcx>],
     destination: Option<(Place<'tcx>, BasicBlock)>,
+    bb: mir::BasicBlock,
 ) {
     let fn_ty = fx.monomorphize(func.ty(fx.mir, fx.tcx));
     let fn_sig = fx
         .tcx
         .normalize_erasing_late_bound_regions(ParamEnv::reveal_all(), fn_ty.fn_sig(fx.tcx));
-
-    let destination = destination.map(|(place, bb)| (codegen_place(fx, place), bb));
 
     // Handle special calls like instrinsics and empty drop glue.
     let instance = if let ty::FnDef(def_id, substs) = *fn_ty.kind() {
@@ -366,6 +365,7 @@ pub(crate) fn codegen_terminator_call<'tcx>(
             .polymorphize(fx.tcx);
 
         if fx.tcx.symbol_name(instance).name.starts_with("llvm.") {
+            let destination = destination.map(|(place, bb)| (codegen_place(fx, place), bb));
             crate::intrinsics::codegen_llvm_intrinsic_call(
                 fx,
                 &fx.tcx.symbol_name(instance).name,
@@ -378,6 +378,7 @@ pub(crate) fn codegen_terminator_call<'tcx>(
 
         match instance.def {
             InstanceDef::Intrinsic(_) => {
+                let destination = destination.map(|(place, bb)| (codegen_place(fx, place), bb));
                 crate::intrinsics::codegen_intrinsic_call(fx, instance, args, destination, span);
                 return;
             }
@@ -393,6 +394,61 @@ pub(crate) fn codegen_terminator_call<'tcx>(
     } else {
         None
     };
+
+    if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+        let mut is_trace_debug = false;
+        let operand = match instance {
+            Some(inst) => {
+                if fx.tcx.has_attr(inst.def_id(), rustc_span::symbol::Symbol::intern("trace_debug")) {
+                    is_trace_debug = true;
+                }
+                let sym = (&*fx.tcx.symbol_name(inst).name).to_owned();
+                ykpack::CallOperand::Fn(sym)
+            }
+            None => ykpack::CallOperand::Unknown,
+        };
+
+        if is_trace_debug {
+            // It's a call to yktrace::trace_debug. We insert a special terminator which the
+            // TIR compiler recognises at runtime.
+            debug_assert!(args.len() == 1);
+            let mut str_arg = None;
+            if let mir::Operand::Constant(box mir::Constant {
+                literal: ty::Const { ty: const_ty, val: ty::ConstKind::Value(const_val) },
+                ..
+            }) = args[0]
+            {
+                if let ty::Ref(_, rty, _) = const_ty.kind() {
+                    if let ty::Str = rty.kind() {
+                        use rustc_middle::mir::interpret::get_slice_bytes;
+                        let bytes = get_slice_bytes(fx, *const_val);
+                        str_arg = Some(core::str::from_utf8(bytes).unwrap());
+                    }
+                }
+            }
+
+            if let Some(sval) = str_arg {
+                let term = ykpack::Terminator::TraceDebugCall {
+                    msg: sval.to_owned(),
+                    destination: destination.unwrap().1.into(),
+                };
+                sfcx.set_terminator(bb.as_u32(), term);
+            } else {
+                panic!("Argument to yktrace::trace_debug is not a constant &str");
+            }
+        } else {
+            let term = ykpack::Terminator::Call {
+                operand,
+                args: args.iter().map(|a| sfcx.lower_operand(fx, bb.as_u32(), a)).collect(),
+                destination: destination.map(|(ret_val, ret_bb)| {
+                    (sfcx.lower_place(fx, bb.as_u32(), &ret_val), ret_bb.as_u32())
+                }),
+            };
+            sfcx.set_terminator(bb.as_u32(), term);
+        }
+    }
+
+    let destination = destination.map(|(place, bb)| (codegen_place(fx, place), bb));
 
     let extra_args = &args[fn_sig.inputs().len()..];
     let extra_args = extra_args

@@ -6,7 +6,8 @@
     never_type,
     try_blocks,
     hash_drain_filter,
-    str_split_once
+    str_split_once,
+    box_patterns
 )]
 #![warn(rust_2018_idioms)]
 #![warn(unused_lifetimes)]
@@ -73,6 +74,7 @@ mod num;
 mod optimize;
 mod pointer;
 mod pretty_clif;
+mod sir;
 mod toolchain;
 mod trap;
 mod unsize;
@@ -117,6 +119,7 @@ mod prelude {
     pub(crate) use crate::common::*;
     pub(crate) use crate::debuginfo::{DebugContext, UnwindContext};
     pub(crate) use crate::pointer::Pointer;
+    pub(crate) use crate::sir::{Sir, SirFuncCx};
     pub(crate) use crate::trap::*;
     pub(crate) use crate::value_and_place::{CPlace, CPlaceInner, CValue};
 }
@@ -132,7 +135,9 @@ impl<F: Fn() -> String> Drop for PrintOnPanic<F> {
 
 struct CodegenCx<'tcx, M: Module> {
     tcx: TyCtxt<'tcx>,
+    backend_config: BackendConfig,
     module: M,
+    sir: Option<Sir>,
     global_asm: String,
     constants_cx: ConstantCx,
     cached_context: Context,
@@ -142,7 +147,7 @@ struct CodegenCx<'tcx, M: Module> {
 }
 
 impl<'tcx, M: Module> CodegenCx<'tcx, M> {
-    fn new(tcx: TyCtxt<'tcx>, backend_config: BackendConfig, module: M, debug_info: bool) -> Self {
+    fn new(tcx: TyCtxt<'tcx>, backend_config: BackendConfig, module: M, debug_info: bool, cgu_name: &str) -> Self {
         let unwind_context = UnwindContext::new(
             tcx,
             module.isa(),
@@ -155,7 +160,13 @@ impl<'tcx, M: Module> CodegenCx<'tcx, M> {
         };
         CodegenCx {
             tcx,
+            backend_config,
             module,
+            sir: if sir::is_sir_required(tcx, backend_config) {
+                Some(sir::new_sir(tcx, cgu_name))
+            } else {
+                None
+            },
             global_asm: String::new(),
             constants_cx: ConstantCx::default(),
             cached_context: Context::new(),
@@ -165,13 +176,14 @@ impl<'tcx, M: Module> CodegenCx<'tcx, M> {
         }
     }
 
-    fn finalize(mut self) -> (M, String, Option<DebugContext<'tcx>>, UnwindContext<'tcx>) {
+    fn finalize(mut self) -> (M, String, Option<DebugContext<'tcx>>, UnwindContext<'tcx>, Option<Sir>) {
         self.constants_cx.finalize(self.tcx, &mut self.module);
         (
             self.module,
             self.global_asm,
             self.debug_context,
             self.unwind_context,
+            self.sir,
         )
     }
 }
@@ -202,9 +214,36 @@ impl FromStr for CodegenMode {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum TracerMode {
+    None,
+    Sw,
+    Hw,
+}
+
+impl Default for TracerMode {
+    fn default() -> Self {
+        TracerMode::None
+    }
+}
+
+impl FromStr for TracerMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "none" => Ok(TracerMode::None),
+            "sw" => Ok(TracerMode::Sw),
+            "hw" => Ok(TracerMode::Hw),
+            _ => Err(format!("Unknown codegen mode `{}`", s)),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default)]
 pub struct BackendConfig {
     pub codegen_mode: CodegenMode,
+    pub tracer_mode: TracerMode,
 }
 
 impl BackendConfig {
@@ -214,6 +253,7 @@ impl BackendConfig {
             if let Some((name, value)) = opt.split_once('=') {
                 match name {
                     "mode" => config.codegen_mode = value.parse()?,
+                    "tracer" => config.tracer_mode = value.parse()?,
                     _ => return Err(format!("Unknown option `{}`", name)),
                 }
             } else {

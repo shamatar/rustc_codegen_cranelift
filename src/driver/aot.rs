@@ -154,6 +154,7 @@ fn module_codegen(
         backend_config,
         module,
         tcx.sess.opts.debuginfo != DebugInfo::None,
+        &*cgu.name().as_str(),
     );
     super::predefine_mono_items(&mut cx, &mono_items);
     for (mono_item, (linkage, visibility)) in mono_items {
@@ -178,9 +179,20 @@ fn module_codegen(
             }
         }
     }
-    let (mut module, global_asm, debug, mut unwind_context) =
+    let (mut module, global_asm, debug, mut unwind_context, sir) =
         tcx.sess.time("finalize CodegenCx", || cx.finalize());
     crate::main_shim::maybe_create_entry_wrapper(tcx, &mut module, &mut unwind_context, false);
+
+    if let crate::TracerMode::Sw = backend_config.tracer_mode {
+        if tcx.crate_name(LOCAL_CRATE).as_str() == "build_script_build" || tcx.crate_name(LOCAL_CRATE).as_str() == "xtask" {
+            let func_id = module.declare_function("__yk_swt_rec_loc", Linkage::Preemptible, &Signature {
+                call_conv: module.target_config().default_call_conv,
+                params: vec![AbiParam::new(pointer_ty(tcx)), AbiParam::new(types::I32)],
+                returns: vec![],
+            }).unwrap();
+            let _ = module.define_function_bytes(func_id, &[0xc3/*ret*/], &[]);
+        }
+    }
 
     let codegen_result = emit_module(
         tcx,
@@ -192,6 +204,16 @@ fn module_codegen(
         |mut product| {
             if let Some(func_id) = init_atomics_mutex_from_constructor {
                 product.add_constructor(func_id);
+            }
+
+            if let Some(sir) = sir {
+                crate::sir::write_sir(
+                    tcx,
+                    &mut product,
+                    &*cgu.name().as_str(),
+                    sir.types.into_inner(),
+                    sir.funcs.into_inner(),
+                );
             }
 
             product

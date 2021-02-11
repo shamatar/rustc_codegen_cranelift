@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use rustc_index::vec::IndexVec;
 use rustc_target::abi::call::FnAbi;
 use rustc_target::abi::{Integer, Primitive};
@@ -292,6 +294,7 @@ pub(crate) struct FunctionCx<'clif, 'tcx, M: Module> {
     pub(crate) cx: &'clif mut crate::CodegenCx<'tcx, M>,
     pub(crate) tcx: TyCtxt<'tcx>,
     pub(crate) pointer_type: Type, // Cached from module
+    pub(crate) sir_func_cx: Option<RefCell<SirFuncCx<'tcx>>>,
 
     pub(crate) instance: Instance<'tcx>,
     pub(crate) mir: &'tcx Body<'tcx>,
