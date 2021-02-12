@@ -147,7 +147,13 @@ struct CodegenCx<'tcx, M: Module> {
 }
 
 impl<'tcx, M: Module> CodegenCx<'tcx, M> {
-    fn new(tcx: TyCtxt<'tcx>, backend_config: BackendConfig, module: M, debug_info: bool, cgu_name: &str) -> Self {
+    fn new(
+        tcx: TyCtxt<'tcx>,
+        backend_config: BackendConfig,
+        module: M,
+        debug_info: bool,
+        cgu_name: &str,
+    ) -> Self {
         let unwind_context = UnwindContext::new(
             tcx,
             module.isa(),
@@ -176,7 +182,15 @@ impl<'tcx, M: Module> CodegenCx<'tcx, M> {
         }
     }
 
-    fn finalize(mut self) -> (M, String, Option<DebugContext<'tcx>>, UnwindContext<'tcx>, Option<Sir>) {
+    fn finalize(
+        mut self,
+    ) -> (
+        M,
+        String,
+        Option<DebugContext<'tcx>>,
+        UnwindContext<'tcx>,
+        Option<Sir>,
+    ) {
         self.constants_cx.finalize(self.tcx, &mut self.module);
         (
             self.module,

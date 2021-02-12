@@ -399,7 +399,10 @@ pub(crate) fn codegen_terminator_call<'tcx>(
         let mut is_trace_debug = false;
         let operand = match instance {
             Some(inst) => {
-                if fx.tcx.has_attr(inst.def_id(), rustc_span::symbol::Symbol::intern("trace_debug")) {
+                if fx.tcx.has_attr(
+                    inst.def_id(),
+                    rustc_span::symbol::Symbol::intern("trace_debug"),
+                ) {
                     is_trace_debug = true;
                 }
                 let sym = (&*fx.tcx.symbol_name(inst).name).to_owned();
@@ -414,7 +417,11 @@ pub(crate) fn codegen_terminator_call<'tcx>(
             debug_assert!(args.len() == 1);
             let mut str_arg = None;
             if let mir::Operand::Constant(box mir::Constant {
-                literal: ty::Const { ty: const_ty, val: ty::ConstKind::Value(const_val) },
+                literal:
+                    ty::Const {
+                        ty: const_ty,
+                        val: ty::ConstKind::Value(const_val),
+                    },
                 ..
             }) = args[0]
             {
@@ -439,7 +446,10 @@ pub(crate) fn codegen_terminator_call<'tcx>(
         } else {
             let term = ykpack::Terminator::Call {
                 operand,
-                args: args.iter().map(|a| sfcx.lower_operand(fx, bb.as_u32(), a)).collect(),
+                args: args
+                    .iter()
+                    .map(|a| sfcx.lower_operand(fx, bb.as_u32(), a))
+                    .collect(),
                 destination: destination.map(|(ret_val, ret_bb)| {
                     (sfcx.lower_place(fx, bb.as_u32(), &ret_val), ret_bb.as_u32())
                 }),

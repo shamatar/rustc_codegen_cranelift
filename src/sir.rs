@@ -2,31 +2,29 @@
 //!
 //! SIR is built in-memory during code-generation, and finally placed into an ELF section at link time.
 
-
 use crate::common::FunctionCx;
 use crate::{BackendConfig, CodegenCx, TracerMode};
 use cranelift_module::Module;
-use object::{SymbolFlags, write::SymbolSection};
+use object::{write::SymbolSection, SymbolFlags};
 use rustc_data_structures::fx::FxHashMap;
-use rustc_hir::def_id::LOCAL_CRATE;
-use rustc_middle::ty::TyCtxt;
-use rustc_span::symbol::Symbol;
-use std::convert::TryFrom;
-use std::default::Default;
-use rustc_middle::ty::{IntTy, UintTy};
 use rustc_data_structures::fx::FxHasher;
 use rustc_hir;
+use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_middle::mir;
 use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::AdtDef;
+use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::TypeFoldable;
 use rustc_middle::ty::{self, layout::TyAndLayout};
 use rustc_middle::ty::{Instance, Ty};
+use rustc_middle::ty::{IntTy, UintTy};
+use rustc_span::symbol::Symbol;
 use rustc_target::abi::{FieldsShape, LayoutOf, VariantIdx};
 use std::alloc::Layout;
+use std::convert::TryFrom;
 use std::convert::TryInto;
+use std::default::Default;
 use std::hash::{Hash, Hasher};
-
 
 const SIR_GLOBAL_SYM_PREFIX: &str = ".yksir";
 
@@ -69,7 +67,9 @@ pub(crate) fn write_sir<'tcx>(
         "{}_{}_{}_{}_sym",
         SIR_GLOBAL_SYM_PREFIX,
         tcx.original_crate_name(LOCAL_CRATE),
-        tcx.crate_disambiguator(LOCAL_CRATE).to_fingerprint().to_hex(),
+        tcx.crate_disambiguator(LOCAL_CRATE)
+            .to_fingerprint()
+            .to_hex(),
         cgu_name,
     );
 
@@ -77,7 +77,9 @@ pub(crate) fn write_sir<'tcx>(
         "{}_{}_{}_{}",
         SIR_GLOBAL_SYM_PREFIX,
         tcx.original_crate_name(LOCAL_CRATE),
-        tcx.crate_disambiguator(LOCAL_CRATE).to_fingerprint().to_hex(),
+        tcx.crate_disambiguator(LOCAL_CRATE)
+            .to_fingerprint()
+            .to_hex(),
         cgu_name,
     );
 
@@ -85,8 +87,11 @@ pub(crate) fn write_sir<'tcx>(
         .object
         .segment_name(object::write::StandardSegment::Data)
         .to_vec();
-    let section_id =
-        product.object.add_section(segment, section_name.into_bytes(), object::SectionKind::Data);
+    let section_id = product.object.add_section(
+        segment,
+        section_name.into_bytes(),
+        object::SectionKind::Data,
+    );
     let offset = product.object.append_section_data(section_id, &buf, 1);
     // For MachO and probably PE this is necessary to prevent the linker from throwing away the
     // .rustc section. For ELF this isn't necessary, but it also doesn't harm.
@@ -105,7 +110,10 @@ pub(crate) fn write_sir<'tcx>(
 impl<'tcx, M: Module> CodegenCx<'tcx, M> {
     fn define_sir_type(&self, ty: ykpack::Ty) -> ykpack::TypeId {
         let mut types = self.sir.as_ref().unwrap().types.borrow_mut();
-        ykpack::TypeId { cgu: types.cgu_hash, idx: types.index(ty) }
+        ykpack::TypeId {
+            cgu: types.cgu_hash,
+            idx: types.index(ty),
+        }
     }
 
     pub(crate) fn define_function_sir(&self, sir: ykpack::Body) {
@@ -118,9 +126,6 @@ impl<'tcx, M: Module> CodegenCx<'tcx, M> {
         (ty.size, ty.align)
     }
 }
-
-
-
 
 pub(crate) const BUILD_SCRIPT_CRATE: &str = "build_script_build";
 const CHECKABLE_BINOPS: [ykpack::BinOp; 5] = [
@@ -140,8 +145,8 @@ macro_rules! binop_lowerings {
     }
 }
 
-pub(crate) use ykpack::build::{Sir, SirTypes};
 pub(crate) use ykpack;
+pub(crate) use ykpack::build::{Sir, SirTypes};
 
 pub(crate) fn new_sir(tcx: TyCtxt<'_>, cgu_name: &str) -> Sir {
     // Build the CGU hash.
@@ -208,7 +213,11 @@ impl<'tcx> SirFuncCx<'tcx> {
                 let arg_ok = if let ty::Ref(_, inner_ty, rustc_hir::Mutability::Mut) =
                     fx.mir.local_decls[mir::Local::from_u32(1)].ty.kind()
                 {
-                    if let ty::Adt(def, _) = inner_ty.kind() { def.is_struct() } else { false }
+                    if let ty::Adt(def, _) = inner_ty.kind() {
+                        def.is_struct()
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 };
@@ -256,7 +265,10 @@ impl<'tcx> SirFuncCx<'tcx> {
             let ml = mir::Local::from_usize(idx);
             let sirty =
                 this.lower_ty_and_layout(fx, &this.mono_layout_of(fx, this.mir.local_decls[ml].ty));
-            this.sir_builder.func.local_decls.push(ykpack::LocalDecl { ty: sirty, referenced: false });
+            this.sir_builder.func.local_decls.push(ykpack::LocalDecl {
+                ty: sirty,
+                referenced: false,
+            });
             this.var_map.insert(
                 ml,
                 ykpack::IPlace::Val {
@@ -324,7 +336,11 @@ impl<'tcx> SirFuncCx<'tcx> {
     }
 
     /// Sets the terminator of the specified block.
-    pub(crate) fn set_terminator(&mut self, bb: ykpack::BasicBlockIndex, new_term: ykpack::Terminator) {
+    pub(crate) fn set_terminator(
+        &mut self,
+        bb: ykpack::BasicBlockIndex,
+        new_term: ykpack::Terminator,
+    ) {
         self.sir_builder.set_terminator(bb, new_term);
     }
 
@@ -364,8 +380,11 @@ impl<'tcx> SirFuncCx<'tcx> {
     ) {
         let bb = bb.as_u32();
         let cond_ip = self.lower_operand(fx, bb, cond);
-        let term =
-            ykpack::Terminator::Assert { cond: cond_ip, expected, target_bb: target_bb.as_u32() };
+        let term = ykpack::Terminator::Assert {
+            cond: cond_ip,
+            expected,
+            target_bb: target_bb.as_u32(),
+        };
         self.set_terminator(bb, term);
     }
 
@@ -762,11 +781,7 @@ impl<'tcx> SirFuncCx<'tcx> {
     }
 
     /// Lower a signed integer.
-    fn lower_int(
-        &self,
-        int: IntTy,
-        s: mir::interpret::Scalar,
-    ) -> Result<ykpack::SignedInt, ()> {
+    fn lower_int(&self, int: IntTy, s: mir::interpret::Scalar) -> Result<ykpack::SignedInt, ()> {
         match int {
             IntTy::I8 => match s.to_i8() {
                 Ok(val) => Ok(ykpack::SignedInt::I8(val)),
@@ -815,7 +830,13 @@ impl<'tcx> SirFuncCx<'tcx> {
 
         let ty = self.lower_ty_and_layout(fx, &self.mono_layout_of(fx, dest_ty));
         let dest_ip = self.new_sir_local(ty);
-        let stmt = ykpack::Statement::BinaryOp { dest: dest_ip.clone(), op, opnd1, opnd2, checked };
+        let stmt = ykpack::Statement::BinaryOp {
+            dest: dest_ip.clone(),
+            op,
+            opnd1,
+            opnd2,
+            checked,
+        };
         self.push_stmt(bb, stmt);
         dest_ip
     }
@@ -871,7 +892,11 @@ impl<'tcx> SirFuncCx<'tcx> {
             ty::Tuple(..) => self.lower_tuple_ty(fx, ty_layout),
             _ => ykpack::TyKind::Unimplemented(format!("{:?}", ty_layout)),
         };
-        let sir_ty = ykpack::Ty { size, align, kind: sir_tykind };
+        let sir_ty = ykpack::Ty {
+            size,
+            align,
+            kind: sir_tykind,
+        };
         let tyid = fx.cx.define_sir_type(sir_ty);
         tyid
     }
@@ -913,7 +938,10 @@ impl<'tcx> SirFuncCx<'tcx> {
                 }
 
                 ykpack::TyKind::Tuple(ykpack::TupleTy {
-                    fields: ykpack::Fields { offsets: sir_offsets, tys: sir_tys },
+                    fields: ykpack::Fields {
+                        offsets: sir_offsets,
+                        tys: sir_tys,
+                    },
                 })
             }
             _ => ykpack::TyKind::Unimplemented(format!("{:?}", ty_layout)),
@@ -940,7 +968,10 @@ impl<'tcx> SirFuncCx<'tcx> {
                     }
 
                     ykpack::TyKind::Struct(ykpack::StructTy {
-                        fields: ykpack::Fields { offsets: sir_offsets, tys: sir_tys },
+                        fields: ykpack::Fields {
+                            offsets: sir_offsets,
+                            tys: sir_tys,
+                        },
                     })
                 }
                 _ => ykpack::TyKind::Unimplemented(format!("{:?}", ty_layout)),

@@ -7,7 +7,7 @@ use rustc_middle::ty::adjustment::PointerCast;
 use rustc_middle::ty::layout::FnAbiExt;
 use rustc_target::abi::call::FnAbi;
 
-use crate::{TracerMode, prelude::*, sir};
+use crate::{prelude::*, sir, TracerMode};
 
 pub(crate) fn codegen_fn<'tcx>(
     cx: &mut crate::CodegenCx<'tcx, impl Module>,
@@ -228,7 +228,12 @@ macro_rules! set_unimplemented_sir_term {
     ($func_cx:ident, $bb:expr, $term:expr) => {
         if let Some(mut sfcx) = $func_cx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
             let note = rustc_middle::ty::print::with_no_trimmed_paths(|| {
-                format!("{}:{}: unimplemented terminator: {:?}", file!(), line!(), $term.kind)
+                format!(
+                    "{}:{}: unimplemented terminator: {:?}",
+                    file!(),
+                    line!(),
+                    $term.kind
+                )
             });
             sfcx.set_terminator($bb.as_u32(), ykpack::Terminator::Unimplemented(note))
         }
@@ -252,17 +257,20 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
     {
         None
     } else {
-        let func_id = fx.cx.module.declare_function(
-            "__yk_swt_rec_loc",
-            Linkage::Import,
-            &Signature {
-                params: vec![AbiParam::new(pointer_ty(fx.tcx)), AbiParam::new(types::I32)],
-                returns: vec![],
-                call_conv: fx.cx.module.target_config().default_call_conv,
-            },
-        ).unwrap();
+        let func_id = fx
+            .cx
+            .module
+            .declare_function(
+                "__yk_swt_rec_loc",
+                Linkage::Import,
+                &Signature {
+                    params: vec![AbiParam::new(pointer_ty(fx.tcx)), AbiParam::new(types::I32)],
+                    returns: vec![],
+                    call_conv: fx.cx.module.target_config().default_call_conv,
+                },
+            )
+            .unwrap();
         let trace_fn = fx.cx.module.declare_func_in_func(func_id, &mut fx.bcx.func);
-
 
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -361,7 +369,9 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                     }
 
                     if can_immediately_return {
-                        if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
+                        if let Some(mut sfcx) =
+                            fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut())
+                        {
                             sfcx.set_terminator(target.as_u32(), ykpack::Terminator::Return);
                         }
                         crate::abi::codegen_return(fx);

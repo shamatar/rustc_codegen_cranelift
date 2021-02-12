@@ -184,13 +184,21 @@ fn module_codegen(
     crate::main_shim::maybe_create_entry_wrapper(tcx, &mut module, &mut unwind_context, false);
 
     if let crate::TracerMode::Sw = backend_config.tracer_mode {
-        if tcx.crate_name(LOCAL_CRATE).as_str() == "build_script_build" || tcx.crate_name(LOCAL_CRATE).as_str() == "xtask" {
-            let func_id = module.declare_function("__yk_swt_rec_loc", Linkage::Preemptible, &Signature {
-                call_conv: module.target_config().default_call_conv,
-                params: vec![AbiParam::new(pointer_ty(tcx)), AbiParam::new(types::I32)],
-                returns: vec![],
-            }).unwrap();
-            let _ = module.define_function_bytes(func_id, &[0xc3/*ret*/], &[]);
+        if tcx.crate_name(LOCAL_CRATE).as_str() == "build_script_build"
+            || tcx.crate_name(LOCAL_CRATE).as_str() == "xtask"
+        {
+            let func_id = module
+                .declare_function(
+                    "__yk_swt_rec_loc",
+                    Linkage::Preemptible,
+                    &Signature {
+                        call_conv: module.target_config().default_call_conv,
+                        params: vec![AbiParam::new(pointer_ty(tcx)), AbiParam::new(types::I32)],
+                        returns: vec![],
+                    },
+                )
+                .unwrap();
+            let _ = module.define_function_bytes(func_id, &[0xc3 /*ret*/], &[]);
         }
     }
 
