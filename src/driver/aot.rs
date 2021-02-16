@@ -187,7 +187,7 @@ fn module_codegen(
         if tcx.crate_name(LOCAL_CRATE).as_str() == "build_script_build"
             || tcx.crate_name(LOCAL_CRATE).as_str() == "xtask"
         {
-            let func_id = module
+            let rec_loc = module
                 .declare_function(
                     "__yk_swt_rec_loc",
                     Linkage::Preemptible,
@@ -198,7 +198,23 @@ fn module_codegen(
                     },
                 )
                 .unwrap();
-            let _ = module.define_function_bytes(func_id, &[0xc3 /*ret*/], &[]);
+            let _ = module.define_function_bytes(rec_loc, &[0xc3 /*ret*/], &[]);
+
+            let rec_func_addr = module
+                .declare_function(
+                    "__yk_swt_rec_func_addr",
+                    Linkage::Preemptible,
+                    &Signature {
+                        call_conv: module.target_config().default_call_conv,
+                        params: vec![
+                            AbiParam::new(pointer_ty(tcx)),
+                            AbiParam::new(pointer_ty(tcx)),
+                        ],
+                        returns: vec![],
+                    },
+                )
+                .unwrap();
+            let _ = module.define_function_bytes(rec_func_addr, &[0xc3 /*ret*/], &[]);
         }
     }
 

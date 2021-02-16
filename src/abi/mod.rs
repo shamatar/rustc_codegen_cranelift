@@ -395,6 +395,45 @@ pub(crate) fn codegen_terminator_call<'tcx>(
         None
     };
 
+    if fx.sir_func_cx.is_some() {
+        if let Some(inst) = instance {
+            if fx.tcx.has_attr(
+                inst.def_id(),
+                rustc_span::symbol::Symbol::intern("do_not_trace"),
+            ) {
+                let rec_func_id = fx
+                    .cx
+                    .module
+                    .declare_function(
+                        "__yk_swt_rec_func_addr",
+                        Linkage::Import,
+                        &Signature {
+                            call_conv: fx.cx.module.target_config().default_call_conv,
+                            params: vec![
+                                AbiParam::new(pointer_ty(fx.tcx)),
+                                AbiParam::new(pointer_ty(fx.tcx)),
+                            ],
+                            returns: vec![],
+                        },
+                    )
+                    .unwrap();
+                let rec_func_ref = fx
+                    .cx
+                    .module
+                    .declare_func_in_func(rec_func_id, &mut fx.bcx.func);
+
+                let callee_name = fx.anonymous_str(
+                    "__sw_trace_self_name_",
+                    &format!("{}\0", fx.tcx.symbol_name(inst).name),
+                );
+                let callee_func_ref = fx.get_function_ref(inst);
+                let callee_addr = fx.bcx.ins().func_addr(pointer_ty(fx.tcx), callee_func_ref);
+
+                fx.bcx.ins().call(rec_func_ref, &[callee_name, callee_addr]);
+            }
+        }
+    }
+
     if let Some(mut sfcx) = fx.sir_func_cx.as_ref().map(|sfcx| sfcx.borrow_mut()) {
         let mut is_trace_debug = false;
         let operand = match instance {
