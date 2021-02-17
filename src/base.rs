@@ -357,7 +357,7 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                     sfcx.set_term_goto(bb, *target);
                 }
 
-                if let TerminatorKind::Return = fx.mir[*target].terminator().kind {
+                /*if let TerminatorKind::Return = fx.mir[*target].terminator().kind {
                     let mut can_immediately_return = true;
                     for stmt in &fx.mir[*target].statements {
                         if let StatementKind::StorageDead(_) = stmt.kind {
@@ -377,7 +377,7 @@ fn codegen_fn_content(fx: &mut FunctionCx<'_, '_, impl Module>) {
                         crate::abi::codegen_return(fx);
                         continue;
                     }
-                }
+                }*/
 
                 let block = fx.get_block(*target);
                 fx.bcx.ins().jump(block, &[]);
