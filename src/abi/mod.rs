@@ -668,6 +668,44 @@ pub(crate) fn codegen_terminator_call<'tcx>(
         fx.bcx.func.dfg.signatures[sig_ref].params = abi_params;
     }
 
+    if fx.sir_func_cx.is_some() {
+        if let Some(inst) = instance {
+            if fx.tcx.has_attr(
+                inst.def_id(),
+                rustc_span::symbol::Symbol::intern("do_not_trace"),
+            ) {
+                let rec_func_id = fx
+                    .cx
+                    .module
+                    .declare_function(
+                        "__yk_swt_rec_loc",
+                        Linkage::Import,
+                        &Signature {
+                            call_conv: fx.cx.module.target_config().default_call_conv,
+                            params: vec![
+                                AbiParam::new(pointer_ty(fx.tcx)),
+                                AbiParam::new(types::I32),
+                            ],
+                            returns: vec![],
+                        },
+                    )
+                    .unwrap();
+                let rec_func_ref = fx
+                    .cx
+                    .module
+                    .declare_func_in_func(rec_func_id, &mut fx.bcx.func);
+
+                let callee_name = fx.anonymous_str(
+                    "__sw_trace_self_name_",
+                    &format!("{}\0", fx.tcx.symbol_name(inst).name),
+                );
+                let return_block = fx.bcx.ins().iconst(types::I32, 1);
+
+                fx.bcx.ins().call(rec_func_ref, &[callee_name, return_block]);
+            }
+        }
+    }
+
     if let Some((_, dest)) = destination {
         let ret_block = fx.get_block(dest);
         fx.bcx.ins().jump(ret_block, &[]);

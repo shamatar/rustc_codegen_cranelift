@@ -101,6 +101,18 @@ pub(crate) fn codegen_fn<'tcx>(
         // There's no use in serialising these "empty functions" and they clash with the real
         // declarations.
         if !sfcx.is_empty() {
+            if sfcx.sir_builder.func.flags.contains(ykpack::BodyFlags::DO_NOT_TRACE) {
+                sfcx.sir_builder.func.blocks[0].term = ykpack::Terminator::Goto(1);
+                if sfcx.sir_builder.func.blocks.len() < 2 {
+                    sfcx.sir_builder.func.blocks.push(ykpack::BasicBlock {
+                        stmts: vec![],
+                        term: ykpack::Terminator::Return,
+                    });
+                } else {
+                    sfcx.sir_builder.func.blocks[1].term = ykpack::Terminator::Return;
+                }
+            }
+
             sfcx.compute_layout_and_offsets(&fx);
             fx.cx.define_function_sir(sfcx.sir_builder.func);
         }
