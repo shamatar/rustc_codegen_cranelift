@@ -70,17 +70,25 @@ impl<'tcx> UnwindContext<'tcx> {
         }
     }
 
-    #[cfg(feature = "jit")]
+    #[cfg(all(feature = "jit", windows))]
+    pub(crate) unsafe fn register_jit(
+        self,
+        _jit_module: &cranelift_jit::JITModule,
+    ) -> UnwindRegistry {
+        UnwindRegistry { _frame_table: vec![], registrations: vec![] }
+    }
+
+    #[cfg(all(feature = "jit", not(windows)))]
     pub(crate) unsafe fn register_jit(
         self,
         jit_module: &cranelift_jit::JITModule,
-    ) -> Option<UnwindRegistry> {
+    ) -> UnwindRegistry {
         let mut eh_frame =
             EhFrame::from(super::emit::WriterRelocate::new(super::target_endian(self.tcx)));
         self.frame_table.write_eh_frame(&mut eh_frame).unwrap();
 
         if eh_frame.0.writer.slice().is_empty() {
-            return None;
+            return UnwindRegistry { _frame_table: vec![], registrations: vec![] };
         }
 
         let mut eh_frame = eh_frame.0.relocate_for_jit(jit_module);
@@ -122,7 +130,7 @@ impl<'tcx> UnwindContext<'tcx> {
             registrations.push(ptr as usize);
         }
 
-        Some(UnwindRegistry { _frame_table: eh_frame, registrations })
+        UnwindRegistry { _frame_table: eh_frame, registrations }
     }
 }
 
@@ -132,12 +140,14 @@ pub(crate) struct UnwindRegistry {
     registrations: Vec<usize>,
 }
 
+#[cfg(all(feature = "jit", not(windows)))]
 extern "C" {
     // libunwind import
     fn __register_frame(fde: *const u8);
     fn __deregister_frame(fde: *const u8);
 }
 
+#[cfg(all(feature = "jit", not(windows)))]
 impl Drop for UnwindRegistry {
     fn drop(&mut self) {
         unsafe {
