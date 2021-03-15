@@ -34,10 +34,11 @@ if [[ "$unamestr" == 'Linux' || "$unamestr" == "FreeBSD" ]]; then
    export RUSTFLAGS='-Clink-arg=-Wl,-rpath=$ORIGIN/../lib '$RUSTFLAGS
 elif [[ "$unamestr" == 'Darwin' ]]; then
    export RUSTFLAGS='-Csplit-debuginfo=unpacked -Clink-arg=-Wl,-rpath,@loader_path/../lib -Zosx-rpath-install-name '$RUSTFLAGS
-   dylib_ext='dylib'
+elif [[ "$unamestr" == 'MINGW64_NT-10.0-17763' ]]; then
+    echo
 else
-   echo "Unsupported os $unamestr"
-   exit 1
+    echo "Unsupported os $unamestr"
+    exit 1
 fi
 if [[ "$CHANNEL" == "release" ]]; then
     cargo build --release
@@ -51,7 +52,11 @@ rm -rf "$target_dir"
 mkdir "$target_dir"
 mkdir "$target_dir"/bin "$target_dir"/lib
 ln target/$CHANNEL/cg_clif{,_build_sysroot} "$target_dir"/bin
-ln target/$CHANNEL/*rustc_codegen_cranelift* "$target_dir"/lib
+if [[ "$unamestr" == 'MINGW64_NT-10.0-17763' ]]; then
+    ln target/$CHANNEL/*rustc_codegen_cranelift* "$target_dir"/bin
+else
+    ln target/$CHANNEL/*rustc_codegen_cranelift* "$target_dir"/lib
+fi
 ln rust-toolchain scripts/config.sh scripts/cargo.sh "$target_dir"
 
 mkdir -p "$target_dir/lib/rustlib/$TARGET_TRIPLE/lib/"
