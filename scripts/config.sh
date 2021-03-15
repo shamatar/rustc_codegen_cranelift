@@ -25,3 +25,6 @@ fi
 
 export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib:"$dir"/lib"
 export DYLD_LIBRARY_PATH=$LD_LIBRARY_PATH
+if [[ "$unamestr" == 'MINGW64_NT-10.0-17763' ]]; then
+export PATH="$PATH;$LD_LIBRARY_PATH"
+fi
