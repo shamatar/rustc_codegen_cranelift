@@ -54,6 +54,7 @@ mkdir "$target_dir"/bin "$target_dir"/lib
 ln target/$CHANNEL/cg_clif{,_build_sysroot} "$target_dir"/bin
 if [[ "$unamestr" == 'MINGW64_NT-10.0-17763' ]]; then
     ln target/$CHANNEL/*rustc_codegen_cranelift* "$target_dir"/bin
+    cp "$(rustc --print sysroot)"/bin/*.dll "$target_dir"/bin
 else
     ln target/$CHANNEL/*rustc_codegen_cranelift* "$target_dir"/lib
 fi
