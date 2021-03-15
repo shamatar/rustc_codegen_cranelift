@@ -5,7 +5,7 @@ set -e
 
 rm -r target/out || true
 
-scripts/tests.sh no_sysroot
+#scripts/tests.sh no_sysroot
 
 ./build.sh "$@"
 
