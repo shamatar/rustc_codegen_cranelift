@@ -64,8 +64,7 @@ mkdir -p "$target_dir/lib/rustlib/$TARGET_TRIPLE/lib/"
 mkdir -p "$target_dir/lib/rustlib/$HOST_TRIPLE/lib/"
 if [[ "$TARGET_TRIPLE" == "x86_64-pc-windows-gnu" ]]; then
     ls $(rustc --print sysroot)/lib/rustlib/$TARGET_TRIPLE/lib
-    ls $(rustc --print sysroot)/lib/rustlib/$TARGET_TRIPLE/lib/*.o
-    cp $(rustc --print sysroot)/lib/rustlib/$TARGET_TRIPLE/lib/*.o "$target_dir/lib/rustlib/$TARGET_TRIPLE/lib/"
+    cp $(rustc --print sysroot)/lib/rustlib/$TARGET_TRIPLE/lib/{rsbegin,rsend}.o "$target_dir/lib/rustlib/$TARGET_TRIPLE/lib/"
 fi
 
 case "$build_sysroot" in
